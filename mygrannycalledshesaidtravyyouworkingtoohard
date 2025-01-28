@@ -1,0 +1,117 @@
+/*
+ * team8.c
+ *
+ * Created: 21/01/2025 13:26:18
+ * Author : 220095444
+ */ 
+#define F_CPU 20E6
+#include <avr/io.h>
+#include <util/delay.h>
+
+#define LCD_PORT_DATA PORTA
+#define Clear_display 0x01
+#define Return_Home 0x02
+#define Display_On 0x0C
+#define Entry_mode 0x06
+#define Shift_left 0x18
+#define Shift_right 0x1C
+#define Function_set 0x38
+#define Line_1 0x80
+#define Line_2 0xC0
+
+
+#define LCD_RS PB0
+#define	LCD_RW PB1
+#define	LCD_E PB2
+
+char LCD_Buffer[10];
+uint8_t brightness_settings[4] = {0x9A, 0x73, 0x4D, 0x26};
+
+
+void LCD_WRITE_DATA(uint8_t Data)
+{
+	_delay_us(45);				// Give previous write time to complete
+	PORTB &= ~(1<<LCD_RW);		// RW = 0: Write
+	PORTB |= 1<<LCD_RS;			// RS = 1: Display Data being written
+	LCD_PORT_DATA = Data;		// Output data byte
+	PORTB |= 1<<LCD_E;			// Enable 0->1
+	PORTB &= ~(1<<LCD_E);		// Enable 1->0
+	
+}
+
+void LCD_WRITE_COMMAND(uint8_t Data)
+{
+	_delay_us(45);				// Give previous write time to complete	
+	PORTB &= ~(1<<LCD_RW);		// RW = 0: Write
+	PORTB &= ~(1<<LCD_RS);		// RS = 1: Command being written
+    LCD_PORT_DATA = Data;		// Output data byte
+	PORTB |= 1<<LCD_E;			// Enable 0->1
+	PORTB &= ~(1<<LCD_E);		// Enable 1->0
+}
+
+void LCD_Initialise(void)
+{
+	_delay_ms(20);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(10);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x0C);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x06);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x01);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x02);
+	_delay_ms(1);
+}
+
+
+void LCD_Send_String(char *ch)
+{
+	int i = 0;
+	while(ch[i] != '\0')
+	{
+		LCD_WRITE_DATA(ch[i++]);
+	}
+}
+
+int main(void)
+{
+	
+	TCCR1A = 1<<WGM10 | 1<< COM1A1; // comb1 and coma1 correspond to ocr1a and b
+	
+	// setting 8-bit pwm, prescale,
+	
+	TCCR1B = 1<<WGM12 | 1<<CS10 | 1<<CS11;
+	OCR1A = brightness_settings[2];
+	
+    /* Replace with your application code */
+	LCD_Initialise();
+	LCD_WRITE_COMMAND(Return_Home);
+	LCD_WRITE_COMMAND(Clear_display);
+	LCD_Send_String("16:43 21/01/2025");
+	LCD_WRITE_COMMAND(Line_2);
+	LCD_Send_String("RE");
+	
+    
+
+	
+
+
+    while (1) 
+    {
+		LCD_WRITE_COMMAND(Line_2);
+		if((PIND & 1<<PD2))
+		{
+			LCD_Send_String("C1");
+		}
+		else {
+			LCD_Send_String("C2");
+		}
+    }
+}
