@@ -1,0 +1,100 @@
+/*
+ * GPS.c
+ *
+ * Created: 28/01/2025 13:28:40
+ * Author : 230184712
+ */ 
+#define F_CPU 20E6
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+#include <string.h>
+#include <stdio.h>
+
+#define Baud_Rate 9600UL
+#define Baud_Register_Value ((F_CPU / (16 * Baud_Rate)) - 1)
+#define IN 1
+#define OUT 0
+
+char UART_Buffer[30];
+int GPS_Store[];
+int Store = 0;
+int Check [6]; //6 character wide array
+
+int8_t if_index_1 = 0; //  this variable is used in the uart receive isr to loop through the statements that fill up the check 
+
+
+void Transmit_Character(char C)
+{
+	while(!(UCSR1A & 1<<UDRE1));
+	UDR1 = C;
+}
+
+void Transmit_String(char String[])
+{
+	uint8_t String_Length = strlen(String);
+	for (uint8_t Index = 0; Index < String_Length; Index++)
+	{
+		Transmit_Character(String[Index]);
+	}
+}
+
+int main(void)
+{
+   	UCSR1B = 1<<TXEN1 | 1<<RXEN1 | 1<<RXCIE1;
+	UBRR1 = Baud_Register_Value;
+	
+	sei();
+
+	if(//gps store is full)
+	{
+		Split_GPS(GPS_Store)
+	}	
+
+	while (1) 
+	{
+		asm("nop");
+	}
+}
+
+void Split_GPS(variable)
+{
+	
+
+}
+
+ISR(USART1_RX_vect)
+{
+
+	volatile char Rx_Char;
+	Rx_Char = UDR1;
+
+	//Transmit_Character(Rx_Char);
+	//implement logic to store 7wide char
+	uint8_t 
+	
+	if (sizeof(check) = 6)   // checks if the check variable is filled up, shifts the bytes to the end and adds the new rxchar to the end
+		{
+			for(int8_t Index = 0; Index < 6; Index++){   // for loop iterates from one to 6 and shifts the bits down
+				check[Index] = check[Index + 1];
+			}
+			check[6] = Rx_Char; 	// adds the new rxchar to the end	 	
+		}
+	elsif (sizeof(check) < 6) // checks if the check variable(variable to find the phrase $GPRMS,) is empty and fills it up with the first few characters
+		{
+		check[if_index_1] = Rx_Char; 
+		if_index_1++;
+		}
+		
+	if (check == "$GPRMC,")
+		state = IN;
+	
+	if (Rx_Char == "*")
+		state = OUT; //when it reaches * its out of GPRMC
+		store = 0;
+
+	if (state == IN) // inside the GPRMC
+		GPS_store[store] = Rx_Char
+		store++;		
+}
