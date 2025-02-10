@@ -90,15 +90,16 @@ ISR(USART1_RX_vect)
 		}
 	
 //new and improved
-if (if_index_1 >= 6) {
-		for (int i = 0; i < 5; i++) {
+	if (if_index_1 >= 7) { //shifts everything to left
+		for (int i = 0; i < 6; i++) {
 			check[i] = check[i + 1];
 		}
-		check[5] = Rx_Char;
+		check[6] = Rx_Char;
 	} else {
 		check[if_index_1++] = Rx_Char;
 	}
-		
+
+
 	if (strncmp(check, "$GPRMC,", 7) == 0)
 		state = IN;
 	
