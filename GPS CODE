@@ -89,7 +89,7 @@ ISR(USART1_RX_vect)
 		//if_index_1++;
 		}
 	
-//new and improved
+//new and improved 
 	if (if_index_1 >= 7) { //shifts everything to left
 		for (int i = 0; i < 6; i++) {
 			check[i] = check[i + 1];
