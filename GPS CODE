@@ -98,3 +98,4 @@ ISR(USART1_RX_vect)
 		GPS_store[store] = Rx_Char
 		store++;		
 }
+// Logi has a big head
