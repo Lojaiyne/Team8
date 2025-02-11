@@ -19,7 +19,7 @@
 
 
 char UART_Buffer[30];
-int GPS_Store[];
+int GPS_Store[58];
 int Store = 0;
 int state = OUT;
 char Check [7]; //6 character wide array
@@ -62,8 +62,10 @@ int main(void)
 
 void Split_GPS(variable)
 {
-	
-
+	for (int i = 0; i< sizeof(GPS_Store); i++)
+	{
+		if 
+	}
 }
 
 ISR(USART1_RX_vect)
