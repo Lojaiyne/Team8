@@ -17,7 +17,6 @@
 #define IN 1
 #define OUT 0
 
-
 char UART_Buffer[30];
 int GPS_Store[58];
 int Store = 0;
@@ -62,10 +61,70 @@ int main(void)
 
 void Split_GPS(variable)
 {
-	for (int i = 0; i< sizeof(GPS_Store); i++)
-	{
-		if 
-	}
+	//for (int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 6){
+	//		break
+	//	} 
+	//	else if(i <=6 ) {
+	//		dateStore[i] = GPSStore[i];
+	//	}
+	//}
+
+	//for(int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 24){
+	//		break
+	//	} 
+	//	else if(i <=24 ) {
+	//		locationStore[i] = GPSStore[i];
+	//	}
+	//}
+
+	//for(int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 6){
+	//		break
+	//	} 
+	//	else if(i <=6 ) {
+	//		timeStore[i] = GPSStore[i];
+	//	}
+	//}
+--------------------------------------------------------------------------------------------------------
+    char timeStore[10] = {0};
+    char dateStore[10] = {0};
+    char latitude[15] = {0};
+    char NS;  // north/south
+    char longitude[15] = {0};
+    char EW;  // east/west
+
+    char *token = strtok(GPS_Store, ","); //split by comma 
+    int field = 0;
+
+    while (token != NULL) {
+        switch (field) {
+            case 1:  
+                strncpy(timeStore, token, sizeof(timeStore) - 1);
+                break;
+            case 2:
+                strncpy(dateStore, token, sizeof(dateStore) - 1);
+                break;
+            case 3:
+                strncpy(latitude, token, sizeof(latitude) - 1);
+                break;
+            case 4:
+                NS = token[0];
+                break;
+            case 5: 
+                strncpy(longitude, token, sizeof(longitude) - 1);
+                break;
+            case 6: 
+                EW = token[0];
+                break;
+        }
+
+        // Move to the next token
+        token = strtok(NULL, ",");
+        field++;
+    }
+---------------------------------------------------------------------------------------------------------
 }
 
 ISR(USART1_RX_vect)
@@ -76,20 +135,20 @@ ISR(USART1_RX_vect)
 
 	//Transmit_Character(Rx_Char);
 	//implement logic to store 7wide char
-	uint8_t 
+	//uint8_t 
 	
 	//if (sizeof(check) == 7)   // checks if the check variable is filled up, shifts the bytes to the end and adds the new rxchar to the end
-		{
+		//{
 			//for(int8_t Index = 0; Index < 7; Index++){   // for loop iterates from one to 6 and shifts the bits down
 				//check[Index] = check[Index + 1];
-			}
+			//}
 			//check[7] = Rx_Char; 	// adds the new rxchar to the end	 	
-		}
+		//}
 	//else if (sizeof(check) < 7) // checks if the check variable(variable to find the phrase $GPRMS,) is empty and fills it up with the first few characters
-		{
+		//{
 		//check[if_index_1] = Rx_Char; 
 		//if_index_1++;
-		}
+		//}
 	
 //new and improved 
 	if (if_index_1 >= 7) { //shifts everything to left
