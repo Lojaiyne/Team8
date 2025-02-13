@@ -1,0 +1,177 @@
+/*
+ * GPS module.c
+ *
+ * Created: 11/02/2025 14:27:31
+ * Author : 230049329
+ */ 
+
+#define F_CPU 20E6
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+#include <string.h>
+#include <stdio.h>
+
+#define Baud_Rate 9600UL
+#define Baud_Register_Value ((F_CPU / (16 * Baud_Rate)) - 1)
+#define IN 1
+#define OUT 0
+
+char UART_Buffer[30];
+int GPS_Store[58];
+int Store = 0;
+int state = OUT;
+char Check [7]; //6 character wide array
+
+int8_t if_index_1 = 0; //  this variable is used in the uart receive isr to loop through the statements that fill up the check 
+
+
+void Transmit_Character(char C)
+{
+	while(!(UCSR1A & 1<<UDRE1));
+	UDR1 = C;
+}
+
+void Transmit_String(char String[])
+{
+	uint8_t String_Length = strlen(String);
+	for (uint8_t Index = 0; Index < String_Length; Index++)
+	{
+		Transmit_Character(String[Index]);
+	}
+}
+
+int main(void)
+{
+   	UCSR1B = 1<<TXEN1 | 1<<RXEN1 | 1<<RXCIE1;
+	UBRR1 = Baud_Register_Value;
+	
+	sei();
+
+	if(//gps store is full)
+	{
+		Split_GPS(GPS_Store);
+	}	
+
+	while (1) 
+	{
+		asm("nop");
+	}
+}
+
+void Split_GPS(variable)
+{
+	//for (int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 6){
+	//		break
+	//	} 
+	//	else if(i <=6 ) {
+	//		dateStore[i] = GPSStore[i];
+	//	}
+	//}
+
+	//for(int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 24){
+	//		break
+	//	} 
+	//	else if(i <=24 ) {
+	//		locationStore[i] = GPSStore[i];
+	//	}
+	//}
+
+	//for(int i = 0; i< sizeof(GPS_Store); i++){
+	//	if (i > 6){
+	//		break
+	//	} 
+	//	else if(i <=6 ) {
+	//		timeStore[i] = GPSStore[i];
+	//	}
+	//}
+--------------------------------------------------------------------------------------------------------
+    char timeStore[10] = {0};
+    char dateStore[10] = {0};
+    char latitude[15] = {0};
+    char NS;  // north/south
+    char longitude[15] = {0};
+    char EW;  // east/west
+
+    char *token = strtok(GPS_Store, ","); //split by comma 
+    int field = 0;
+
+    while (token != NULL) {
+        switch (field) {
+            case 1:  
+                strncpy(timeStore, token, sizeof(timeStore) - 1);
+                break;
+            case 2:
+                strncpy(dateStore, token, sizeof(dateStore) - 1);
+                break;
+            case 3:
+                strncpy(latitude, token, sizeof(latitude) - 1);
+                break;
+            case 4:
+                NS = token[0];
+                break;
+            case 5: 
+                strncpy(longitude, token, sizeof(longitude) - 1);
+                break;
+            case 6: 
+                EW = token[0];
+                break;
+        }
+
+        // Move to the next token
+        token = strtok(NULL, ",");
+        field++;
+    }
+---------------------------------------------------------------------------------------------------------
+}
+
+ISR(USART1_RX_vect)
+{
+
+	volatile char Rx_Char;
+	Rx_Char = UDR1;
+
+	//Transmit_Character(Rx_Char);
+	//implement logic to store 7wide char
+	//uint8_t 
+	
+	//if (sizeof(check) == 7)   // checks if the check variable is filled up, shifts the bytes to the end and adds the new rxchar to the end
+		//{
+			//for(int8_t Index = 0; Index < 7; Index++){   // for loop iterates from one to 6 and shifts the bits down
+				//check[Index] = check[Index + 1];
+			//}
+			//check[7] = Rx_Char; 	// adds the new rxchar to the end	 	
+		//}
+	//else if (sizeof(check) < 7) // checks if the check variable(variable to find the phrase $GPRMS,) is empty and fills it up with the first few characters
+		//{
+		//check[if_index_1] = Rx_Char; 
+		//if_index_1++;
+		//}
+	
+//new and improved 
+	if (if_index_1 >= 7) { //shifts everything to left
+		for (int i = 0; i < 6; i++) {
+			check[i] = check[i + 1];
+		}
+		check[6] = Rx_Char;
+	} else {
+		check[if_index_1++] = Rx_Char;
+	}
+
+
+	if (strncmp(check, "$GPRMC,", 7) == 0)
+		state = IN;
+	
+	if (Rx_Char == "*")
+		state = OUT; //when it reaches * its out of GPRMC
+		store = 0;
+		GPS_Store[store] = '\0';
+		Transmit_String(GPS_Store);
+4.
+	if (state == IN) // inside the GPRMC
+		GPS_store[store] = Rx_Char;
+		store++;		
+}
