@@ -15,14 +15,15 @@
 
 #define Baud_Rate 9600UL
 #define Baud_Register_Value ((F_CPU / (16 * Baud_Rate)) - 1)
+
 #define IN 1
 #define OUT 0
 
 char UART_Buffer[30];
-int GPS_Store[58];
+char GPS_Store[58];
 int Store = 0;
 int state = OUT;
-char Check [7]; //6 character wide array
+char check [7]; //6 character wide array
 
 int8_t if_index_1 = 0; //  this variable is used in the uart receive isr to loop through the statements that fill up the check 
 
@@ -49,10 +50,10 @@ int main(void)
 	
 	sei();
 
-	if(//gps store is full)
-	{
-		Split_GPS(GPS_Store);
-	}	
+	//if(//gps store is full)
+	//{
+	//	Split_GPS(GPS_Store);
+	//}	
 
 	while (1) 
 	{
@@ -60,7 +61,7 @@ int main(void)
 	}
 }
 
-void Split_GPS(variable)
+void Split_GPS(char *GPS_Data)
 {
 	//for (int i = 0; i< sizeof(GPS_Store); i++){
 	//	if (i > 6){
@@ -88,13 +89,13 @@ void Split_GPS(variable)
 	//		timeStore[i] = GPSStore[i];
 	//	}
 	//}
---------------------------------------------------------------------------------------------------------
+
     char timeStore[10] = {0};
     char dateStore[10] = {0};
     char latitude[15] = {0};
-    char NS;  // north/south
+    char NS = ' ';  // north/south
     char longitude[15] = {0};
-    char EW;  // east/west
+    char EW = ' ';  // east/west
 
     char *token = strtok(GPS_Store, ","); //split by comma 
     int field = 0;
@@ -125,7 +126,14 @@ void Split_GPS(variable)
         token = strtok(NULL, ",");
         field++;
     }
----------------------------------------------------------------------------------------------------------
+	
+	Transmit_String(timeStore);
+    Transmit_String(dateStore);
+    Transmit_String(latitude);
+    Transmit_Character(NS);
+    Transmit_String(longitude);
+    Transmit_Character(EW);
+
 }
 
 ISR(USART1_RX_vect)
@@ -152,26 +160,31 @@ ISR(USART1_RX_vect)
 		//}
 	
 //new and improved 
-	if (if_index_1 >= 7) { //shifts everything to left
+	if (if_index_1 >= 6) { //shifts everything to left
 		for (int i = 0; i < 6; i++) {
 			check[i] = check[i + 1];
 		}
 		check[6] = Rx_Char;
-	} else {
+	}
+	 else {
 		check[if_index_1++] = Rx_Char;
 	}
 
 
-	if (strncmp(check, "$GPRMC,", 7) == 0)
+	if (strncmp(check, "$GPRMC,", 7) == 0){
 		state = IN;
+	}
 	
-	if (Rx_Char == "*")
+	if (Rx_Char == '*') {
 		state = OUT; //when it reaches * its out of GPRMC
-		store = 0;
-		GPS_Store[store] = '\0';
+		Store = 0;
+		GPS_Store[Store] = '\0';
 		Transmit_String(GPS_Store);
-4.
-	if (state == IN) // inside the GPRMC
-		GPS_store[store] = Rx_Char;
-		store++;		
+		Split_GPS(GPS_Store);
+	}
+
+	if (state == IN){ // inside the GPRMC 
+		GPS_Store[Store] = Rx_Char;
+		Store++;		
+	}
 }
