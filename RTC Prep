@@ -1,0 +1,362 @@
+/*
+ * Full_Proteus.c
+ *
+ * Created: 18/02/2025 13:16:53
+ * Author : 230204618
+ */ 
+
+#define F_CPU 20E6
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdbool.h>
+#include <avr/interrupt.h>
+
+#define LCD_PORT_DATA PORTA
+#define Clear_display 0x01
+#define Return_Home 0x02
+#define Display_On 0x0C
+#define Entry_mode 0x06
+#define Shift_left 0x18
+#define Shift_right 0x1C
+#define Function_set 0x38
+#define Line_1 0x80
+#define Line_2 0xC0
+
+#define LCD_RS PB0
+#define	LCD_RW PB1
+#define	LCD_E PB2
+
+// Function prototypes
+void I2C_Write(uint8_t);
+void I2C_Start(void);
+void I2C_Stop(void);
+int8_t I2C_Read_A(void);
+int8_t I2C_Read_N(void);
+uint8_t BCD_to_Time(uint8_t);
+
+//RTC Register Map
+#define RTCADDR B1101111//page11 datasheet'/
+#define RTCSEC 0x00
+#define RTCMIN 0x01
+#define RTCHOUR 0x02
+#define RTCWKDAY 0x03
+#define RTCDATE 0x04
+#define RTCMTH 0x05
+#define RTCYEAR 0x06
+#define RTCCONTROL 0x07
+#define RTCOSCCTRIM 0x08
+
+//RTC Alarm Registers
+#define ALM0SEC 0x0A
+#define ALM0MIN 0x0B
+#define ALM0HOUR 0x0C
+#define ALM0WKDAY 0x0D
+#define ALM0DATE 0x0E
+#define ALM0MTH 0x0F
+#define ALM1SEC 0x11
+#define ALM1MIN 0x12
+#define ALM1HOUR 0x13
+#define ALM1WKDAY 0x14
+#define ALM1DATE 0x15
+#define ALM1MTH 0x16
+
+//RTC Power-Fall Time-Stamp
+#define PWRDNMIN 0x18
+#define PWRDNHOUR 0x19
+#define PWRDNDATE 0x1A
+#define PWRDNMTH 0x1B
+#define PWRUPMIN 0x1C
+#define PWRUPHOUR 0x1D
+#define PWRUPDATE 0x1E
+#define PWRUPMTH 0x1F
+
+//void Read_RTC(void);
+#define I2C_Delay _delay_us(50)
+
+// RTC Defines
+#define RTC_WR 0xDE
+#define RTC_RD 0xDF
+#define RTC_ST 7		// Start bit is bit 7 of register RTCSEC
+#define RTC_SQWEN 6		// Square-wave output enable on bit 6 of register CONTROL
+#define RTC_CRSTRIM 2	// Coarse Trim Mode Enable bit in register CONTROL-  Switches Square Wave to 64Hz
+#define RTC_VBATEN 3	// Enable battery backup bit in register TCWKDAY
+#define LPYR 5			// Leap-year is bit 5 in register RTCMTH
+
+//enum{RTCSEC,RTCMIN,RTCHOUR,RTCWKDAY,RTCDATE,RTCMTH,RTCYEAR,RTCCONTROL,RTCOSCCTRIM};
+char *Weekday[]={"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+volatile uint8_t RTC_Read_Flag = 0;
+
+struct {
+	uint8_t BCD_Seconds; uint8_t Seconds;
+	uint8_t BCD_Minutes; uint8_t Minutes;
+	uint8_t BCD_Hours; uint8_t Hours;
+	uint8_t BCD_Day; uint8_t Day;
+	uint8_t BCD_Date; uint8_t Date;
+	uint8_t BCD_Month; uint8_t Month;
+	uint8_t BCD_Year; uint8_t Year;
+	uint8_t Leapyear;
+}Time;
+
+/* Read the RTC */
+void Read_RTC(void)
+{
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCSEC);
+	I2C_Start();
+	I2C_Write(RTC_RD);
+	
+	Time.BCD_Seconds = I2C_Read_A() & ~(1<<RTC_ST);	// Read Seconds, mask off ST bit
+	Time.BCD_Minutes = I2C_Read_A();				// Read minutes
+	Time.BCD_Hours = I2C_Read_A() & 0x3F;			// Read hours, mask off 12/!24 bit
+	Time.BCD_Day = I2C_Read_A() & 0x07;				// Read weekday, mask off bits 7:3
+	Time.BCD_Date = I2C_Read_A();					// Read date
+	Time.BCD_Month = I2C_Read_A();					// Read month.  Bit 5 indicates a leap year
+	Time.BCD_Year = I2C_Read_N();					// Read year, end with a NACK
+	
+	I2C_Stop();
+	Time.Leapyear = (Time.BCD_Month & 1<<LPYR) ? 1 : 0;
+	Time.BCD_Month &= ~(1<<LPYR);
+	
+	Time.Seconds = BCD_to_Time(Time.BCD_Seconds);
+	Time.Minutes = BCD_to_Time(Time.BCD_Minutes);
+	Time.Hours = BCD_to_Time(Time.BCD_Hours);
+	Time.Day = BCD_to_Time(Time.BCD_Day);
+	Time.Date = BCD_to_Time(Time.BCD_Date);
+	Time.Month = BCD_to_Time(Time.BCD_Month);
+	Time.Year = BCD_to_Time(Time.BCD_Year);
+}
+
+/* Calculate the day using the Key Value algorithm */
+uint8_t Day_Number(uint8_t Dy, uint8_t Mn, uint8_t Yr, uint8_t Lp)
+{
+	uint8_t Day_Num;
+	uint8_t Key_Val[]={0,1,4,4,0,2,5,0,3,6,1,4,6};
+	// Step 1 - Divide YY by 4, dropping the remainder
+	Day_Num = Yr / 4;
+	// Step 2 - Add the day of the month
+	Day_Num += Dy;
+	// Step 3 - Add the month's Key Value from the array above
+	Day_Num += Key_Val[Mn];
+	// Step 4 - If month is Jan or Feb and it's a leap year, subtract 1
+	if((Mn < 3) & Lp) Day_Num--;
+	// Step 5 - Add the century code. The RTC doesn't store the century, so if always 6 for the 2000s
+	Day_Num += 6;
+	// Step 6 - Add the YY
+	Day_Num += Yr;
+	// Step 7 - Divide by 7 and take the modulus.
+	// 0 = Sat, 1 = Sun, 2 = Mon etc.
+	Day_Num %= 7;
+	return(Day_Num);
+}
+
+uint16_t ADC_Conversion(void)
+{
+	ADCSRA |= 1<<ADSC;
+	while(ADCSRA & 1<<ADSC);
+	return(ADC);
+}
+
+/***********************************************************/
+void I2C_Write(uint8_t number)
+{
+	TWDR=number;
+	TWCR=1<<TWINT | 1<<TWEN;
+	while(!(TWCR & 1<<TWINT));
+}
+/***********************************************************/
+void I2C_Start(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWSTA;
+	while(!(TWCR & 1<<TWINT));
+}
+/***********************************************************/
+void I2C_Stop(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWSTO;
+}
+/***********************************************************/
+int8_t I2C_Read_A(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWEA;
+	while(!(TWCR & 1<<TWINT));
+	return(TWDR);
+}
+/***********************************************************/
+int8_t I2C_Read_N(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN;
+	while(!(TWCR & 1<<TWINT));
+	return(TWDR);
+}
+/***********************************************************/
+uint8_t BCD_to_Time(uint8_t TBCD)
+{
+	static uint8_t temp;
+	temp = TBCD;
+	TBCD &= 0x0F;
+	TBCD += ((temp>>4) * 10);
+	return(TBCD);
+}
+/***********************************************************/
+
+char LCD_Buffer[16];
+uint8_t brightness_settings[4] = {0x9A, 0x73, 0x4D, 0x26};
+
+volatile uint8_t currentMode = 0;		// Default mode
+#define modeButton PD2					// Mode switching button
+
+
+bool isButtonPressed(uint8_t buttonPin) {
+	return (PIND & (1 << buttonPin));
+}
+
+
+void changeMode() {
+	currentMode = currentMode + 1;
+	if (currentMode > 2) {
+		currentMode = 0;
+	}
+}
+
+void LCD_WRITE_DATA(uint8_t Data) {
+	_delay_us(45);				// Give previous write time to complete
+	PORTB &= ~(1<<LCD_RW);		// RW = 0: Write
+	PORTB |= 1<<LCD_RS;			// RS = 1: Display Data being written
+	LCD_PORT_DATA = Data;		// Output data byte
+	PORTB |= 1<<LCD_E;			// Enable 0->1
+	PORTB &= ~(1<<LCD_E);		// Enable 1->0
+	
+}
+
+void LCD_WRITE_COMMAND(uint8_t Data)
+{
+	_delay_us(45);				// Give previous write time to complete
+	PORTB &= ~(1<<LCD_RW);		// RW = 0: Write
+	PORTB &= ~(1<<LCD_RS);		// RS = 1: Command being written
+	LCD_PORT_DATA = Data;		// Output data byte
+	PORTB |= 1<<LCD_E;			// Enable 0->1
+	PORTB &= ~(1<<LCD_E);		// Enable 1->0
+}
+
+void LCD_Initialise(void)
+{
+	_delay_ms(20);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(10);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x38);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x0C);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x06);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x01);
+	_delay_ms(1);
+	LCD_WRITE_COMMAND(0x02);
+	_delay_ms(1);
+}
+
+void LCD_Send_String(char *ch)
+{
+	int i = 0;
+	while(ch[i] != '\0')
+	{
+		LCD_WRITE_DATA(ch[i++]);
+	}
+}
+
+
+int main(void) {
+	TCCR1A = 1<<WGM10 | 1<< COM1A1;		// comb1 and coma1 correspond to ocr1a and b
+	
+	// setting 8-bit pwm, prescale
+	TCCR1B = 1<<WGM12 | 1<<CS10 | 1<<CS11;
+	OCR1A = brightness_settings[2];
+	
+	/* Replace with your application code */
+	LCD_Initialise();
+	LCD_WRITE_COMMAND(Return_Home);
+	LCD_WRITE_COMMAND(Clear_display);
+	LCD_Send_String("16:43 21/01/2025");
+	LCD_WRITE_COMMAND(Line_2);
+	LCD_Send_String("RE");
+	
+	// Enable RTC and 1Hz output
+	/* In order to not reset the seconds, but make sure the oscillator
+	ST bit remains set, read the Seconds register, OR it with RTC_ST
+	and re-write. <- Not added yet. */
+	/*
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCSEC);
+	I2C_Write(1<<RTC_ST);
+	I2C_Stop();
+	I2C_Delay;
+	
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCCONTROL);
+	I2C_Write(1<<RTC_SQWEN);
+	I2C_Stop();
+	I2C_Delay;
+	
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCOSCCTRIM);
+	//I2C_Write(139);
+	I2C_Stop();
+	I2C_Delay;
+	
+	// Crude clock-setting
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCMIN);
+	I2C_Write(0x01); //Minutes
+	I2C_Write(0x02); //Hours
+	I2C_Write(0x03 | 1<<RTC_VBATEN); //Day  
+	I2C_Write(0x04); //Date
+	I2C_Write(0x05); //Month	
+	I2C_Write(0x06); //Year
+	I2C_Stop();
+	*/
+	
+	
+	while (1) {
+		LCD_WRITE_COMMAND(Line_2);
+		if(isButtonPressed(modeButton)) {
+			_delay_ms(30);									// Debounce delay
+			if (isButtonPressed(modeButton)) {				// Confirm button is pressed
+				changeMode();
+				
+				while (isButtonPressed(modeButton));		// Wait until the button is released
+				_delay_ms(30);								// Extra debounce delay
+			}
+		}
+		switch (currentMode) {
+			case 0:
+			LCD_Send_String("Mode 0");
+			break;
+			case 1:
+			LCD_Send_String("Mode 1");
+			break;
+			case 2:
+			LCD_Send_String("Mode 2");
+			break;
+		}
+	}
+}
+
+ISR(INT0_vect)
+{
+	/*
+	All the ISR does is set a flag that tells the program
+	in the main loop to read the RTC.  Once this task
+	is completed in the main loop, it clears the flag.
+	This is called 'semaphore'.
+	*/
+	RTC_Read_Flag = 1;
+}
