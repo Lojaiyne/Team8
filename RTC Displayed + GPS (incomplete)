@@ -1,0 +1,647 @@
+/*
+ * Full_Proteus.c
+ *
+ * Created: 18/02/2025 13:16:53
+ * Author : 230204618
+ */ 
+
+#define F_CPU 20E6
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdbool.h>
+
+#define Baud_Rate 9600UL
+#define Baud_Register_Value ((F_CPU / (16 * Baud_Rate)) - 1)
+
+#define IN 1
+#define OUT 0
+
+char UART_Buffer[30];
+char GPS_Store[58];
+int Store = 0;
+int state = OUT;
+char check [7]; //6 character wide array
+
+int8_t if_index_1 = 0;
+
+#define LCD_Data		PORTA		//LCD Data output     D0-D7 should all be on PORTC
+#define LCD_Data_DDR    DDRA		//LCD Direction port
+#define LCD_Data_RD		PINA		//LCD Data input
+#define LCD_Control     PORTB		//Port where LCD control signals are
+#define LCD_Control_RD  PINB
+#define LCD_Control_DDR DDRB
+#define LCD_RS			0			//Pin on which LCD Register Select is         this is for PORTB0-3 connect as seen by number like PB3 is PORTB3
+#define LCD_RW			1			//Pin on which LCD Read/Write is
+#define LCD_E			2			//Pin on which LCD Enable is
+
+// These constants are derived from information found in the Hitachi HD44780
+// LCD controller datasheet.  This command structure is used on every
+// alphanumeric LCD.
+#define	DISP_FS		0x3B  	//Function set
+#define	DISP_ON		0x0C  	//Display on w/o blink or flash
+#define	DISP_OFF	0x08  	//Display, blink, cursor off
+#define	DISP_CL		0x01  	//Clear display
+#define	DISP_EN 	0x06  	//Data entry mode
+#define	LINE_1		0x80	//DDRAM address for first line
+#define	LINE_2		0xC0	//DDRAM address for second line
+#define	SH_LFT		0x18	//Left-shift display
+#define	SH_RT		0x1C 	//Right-shift display
+#define	HOME		0x02  	//Return home
+
+// Function prototypes
+void I2C_Write(uint8_t);
+void I2C_Start(void);
+void I2C_Stop(void);
+int8_t I2C_Read_A(void);
+int8_t I2C_Read_N(void);
+uint8_t BCD_to_Time(uint8_t);
+
+//RTC Register Map
+#define RTCADDR B1101111		//page11 datasheet'/
+#define RTCSEC 0x00
+#define RTCMIN 0x01
+#define RTCHOUR 0x02
+#define RTCWKDAY 0x03
+#define RTCDATE 0x04
+#define RTCMTH 0x05
+#define RTCYEAR 0x06
+#define RTCCONTROL 0x07
+#define RTCOSCCTRIM 0x08
+
+//RTC Alarm Registers
+#define ALM0SEC 0x0A
+#define ALM0MIN 0x0B
+#define ALM0HOUR 0x0C
+#define ALM0WKDAY 0x0D
+#define ALM0DATE 0x0E
+#define ALM0MTH 0x0F
+#define ALM1SEC 0x11
+#define ALM1MIN 0x12
+#define ALM1HOUR 0x13
+#define ALM1WKDAY 0x14
+#define ALM1DATE 0x15
+#define ALM1MTH 0x16
+
+//RTC Power-Fall Time-Stamp
+#define PWRDNMIN 0x18
+#define PWRDNHOUR 0x19
+#define PWRDNDATE 0x1A
+#define PWRDNMTH 0x1B
+#define PWRUPMIN 0x1C
+#define PWRUPHOUR 0x1D
+#define PWRUPDATE 0x1E
+#define PWRUPMTH 0x1F
+
+//void Read_RTC(void);
+#define I2C_Delay _delay_us(50)
+
+// RTC Defines
+#define RTC_WR 0xDE
+#define RTC_RD 0xDF
+#define RTC_ST 7		// Start bit is bit 7 of register RTCSEC
+#define RTC_SQWEN 6		// Square-wave output enable on bit 6 of register CONTROL
+#define RTC_CRSTRIM 2	// Coarse Trim Mode Enable bit in register CONTROL-  Switches Square Wave to 64Hz
+#define RTC_VBATEN 3	// Enable battery backup bit in register TCWKDAY
+#define LPYR 5			// Leap-year is bit 5 in register RTCMTH
+#define RTC_ALM0EN 4	// Enable alarm 0
+
+//enum{RTCSEC,RTCMIN,RTCHOUR,RTCWKDAY,RTCDATE,RTCMTH,RTCYEAR,RTCCONTROL,RTCOSCCTRIM};
+char *Weekday[]={"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+volatile uint8_t RTC_Read_Flag = 0;
+
+struct {
+	uint8_t BCD_Seconds; uint8_t Seconds;
+	uint8_t BCD_Minutes; uint8_t Minutes;
+	uint8_t BCD_Hours; uint8_t Hours;
+	uint8_t BCD_Day; uint8_t Day;
+	uint8_t BCD_Date; uint8_t Date;
+	uint8_t BCD_Month; uint8_t Month;
+	uint8_t BCD_Year; uint8_t Year;
+	uint8_t Leapyear;
+}Time;
+
+/* Read the RTC */
+void Read_RTC(void)
+{
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCSEC);
+	I2C_Start();
+	I2C_Write(RTC_RD);
+	
+	Time.BCD_Seconds = I2C_Read_A() & ~(1<<RTC_ST);	// Read Seconds, mask off ST bit
+	Time.BCD_Minutes = I2C_Read_A();				// Read minutes
+	Time.BCD_Hours = I2C_Read_A() & 0x3F;			// Read hours, mask off 12/!24 bit
+	Time.BCD_Day = I2C_Read_A() & 0x07;				// Read weekday, mask off bits 7:3
+	Time.BCD_Date = I2C_Read_A();					// Read date
+	Time.BCD_Month = I2C_Read_A();					// Read month.  Bit 5 indicates a leap year
+	Time.BCD_Year = I2C_Read_N();					// Read year, end with a NACK
+	
+	I2C_Stop();
+	Time.Leapyear = (Time.BCD_Month & 1<<LPYR) ? 1 : 0;
+	Time.BCD_Month &= ~(1<<LPYR);
+	
+	Time.Seconds = BCD_to_Time(Time.BCD_Seconds);
+	Time.Minutes = BCD_to_Time(Time.BCD_Minutes);
+	Time.Hours = BCD_to_Time(Time.BCD_Hours);
+	Time.Day = BCD_to_Time(Time.BCD_Day);
+	Time.Date = BCD_to_Time(Time.BCD_Date);
+	Time.Month = BCD_to_Time(Time.BCD_Month);
+	Time.Year = BCD_to_Time(Time.BCD_Year);
+}
+
+/****** Read the RTC Alarm ******/
+
+struct {
+	uint8_t BCD_Seconds; uint8_t Seconds;
+	uint8_t BCD_Minutes; uint8_t Minutes;
+	uint8_t BCD_Hours; uint8_t Hours;
+	uint8_t BCD_Day; uint8_t Day;
+	uint8_t BCD_Date; uint8_t Date;
+	uint8_t BCD_Month; uint8_t Month;
+}AlarmTime;
+
+void Read_Alarm0(void) {
+	I2C_Start();
+	I2C_Write(RTC_WR);  // Start write to RTC
+	I2C_Write(ALM0SEC); // ALM0 Seconds register
+	I2C_Start();
+	I2C_Write(RTC_RD);  // Start read from RTC
+
+	AlarmTime.Seconds = I2C_Read_A() & 0x7F;
+	AlarmTime.Minutes = I2C_Read_A();
+	AlarmTime.Hours = I2C_Read_N() & 0x3F;
+	Time.BCD_Day = I2C_Read_A() & 0x07;				// Read weekday, mask off bits 7:3
+	Time.BCD_Date = I2C_Read_A();					// Read date
+	Time.BCD_Month = I2C_Read_N();
+
+	I2C_Stop();
+
+	// Convert from BCD to decimal
+	AlarmTime.Seconds = BCD_to_Time(AlarmTime.BCD_Seconds);
+	AlarmTime.Minutes = BCD_to_Time(AlarmTime.BCD_Minutes);
+	AlarmTime.Hours = BCD_to_Time(AlarmTime.BCD_Hours);
+	AlarmTime.Day = BCD_to_Time(AlarmTime.BCD_Day);
+	AlarmTime.Date = BCD_to_Time(AlarmTime.BCD_Date);
+	AlarmTime.Month = BCD_to_Time(AlarmTime.BCD_Month);
+}
+
+/* Calculate the day using the Key Value algorithm */
+uint8_t Day_Number(uint8_t Dy, uint8_t Mn, uint8_t Yr, uint8_t Lp)
+{
+	uint8_t Day_Num;
+	uint8_t Key_Val[]={0,1,4,4,0,2,5,0,3,6,1,4,6};
+	// Step 1 - Divide YY by 4, dropping the remainder
+	Day_Num = Yr / 4;
+	// Step 2 - Add the day of the month
+	Day_Num += Dy;
+	// Step 3 - Add the month's Key Value from the array above
+	Day_Num += Key_Val[Mn];
+	// Step 4 - If month is Jan or Feb and it's a leap year, subtract 1
+	if((Mn < 3) & Lp) Day_Num--;
+	// Step 5 - Add the century code. The RTC doesn't store the century, so if always 6 for the 2000s
+	Day_Num += 6;
+	// Step 6 - Add the YY
+	Day_Num += Yr;
+	// Step 7 - Divide by 7 and take the modulus.
+	// 0 = Sat, 1 = Sun, 2 = Mon etc.
+	Day_Num %= 7;
+	return(Day_Num);
+}
+
+uint16_t ADC_Conversion(void)
+{
+	ADCSRA |= 1<<ADSC;
+	while(ADCSRA & 1<<ADSC);
+	return(ADC);
+}
+
+/***********************************************************/
+void I2C_Write(uint8_t number)
+{
+	TWDR=number;
+	TWCR=1<<TWINT | 1<<TWEN;
+	while(!(TWCR & 1<<TWINT));
+}
+/***********************************************************/
+void I2C_Start(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWSTA;
+	while(!(TWCR & 1<<TWINT));
+}
+/***********************************************************/
+void I2C_Stop(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWSTO;
+}
+/***********************************************************/
+int8_t I2C_Read_A(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN | 1<<TWEA;
+	while(!(TWCR & 1<<TWINT));
+	return(TWDR);
+}
+/***********************************************************/
+int8_t I2C_Read_N(void)
+{
+	TWCR=1<<TWINT | 1<<TWEN;
+	while(!(TWCR & 1<<TWINT));
+	return(TWDR);
+}
+/***********************************************************/
+uint8_t BCD_to_Time(uint8_t TBCD)
+{
+	static uint8_t temp;
+	temp = TBCD;
+	TBCD &= 0x0F;
+	TBCD += ((temp>>4) * 10);
+	return(TBCD);
+}
+/***********************************************************/
+
+char LCD_Buffer[16];
+
+volatile uint8_t currentMode = 0;		// Default mode
+#define AlarmLED PD1					// Alarm test LED
+#define modeButton PD2					// Mode switching button
+#define AlarmButton1 PD3				// Mode switching button
+
+bool isButtonPressed(uint8_t buttonPin) {
+	return (PIND & (1 << buttonPin));
+}
+
+
+void changeMode() {
+	currentMode = (currentMode + 1);
+	if (currentMode > 2) {
+		currentMode = 0;
+	}
+}
+
+/****************************************************************/
+/* LCD Function prototypes */
+void LCD_Send_Command(uint8_t);
+void LCD_Send_Data(uint8_t);
+void LCD_Initialise(void);
+void LCD_GOTOXY(uint8_t /*X coord*/,uint8_t/*Y coord*/);
+void LCD_Send_Data_XY(uint8_t /*data*/,uint8_t/*X coord*/,uint8_t/*Y coord*/);
+void LCD_Send_String(char *);
+
+/****************************************************************/
+/*this is for storing the characters from the RTC and GPS :) */
+char disp[1][25] = {"Greek"};
+char arr[10];
+
+int main(void)
+{
+
+	_delay_ms(100);
+	LCD_Control_DDR = 1<<LCD_E | 1<<LCD_RS | 1<<LCD_RW;
+	LCD_Control &= ~(1<<LCD_RW);
+	LCD_Data_DDR = 0xFF;
+	
+	UCSR1B = 1<<TXEN1 | 1<<RXEN1 | 1<<RXCIE1;
+	UBRR1 = Baud_Register_Value;
+
+	LCD_Initialise();
+	_delay_ms(5);
+
+	LCD_GOTOXY(0,0);
+	//LCD_Send_String(arr); // displays the string
+	
+
+	//LCD_GOTOXY(0,1); // next line
+	//LCD_Send_String("100.39N 100.65W"); // characters
+	sei();
+	
+	// Enable RTC and 1Hz output
+	/* In order to not reset the seconds, but make sure the oscillator
+	ST bit remains set, read the Seconds register, OR it with RTC_ST
+	and re-write. <- Not added yet. */
+	
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCSEC);
+	I2C_Write(1<<RTC_ST);			// enable oscillator bit
+	I2C_Stop();
+	I2C_Delay;
+	
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCCONTROL);
+	I2C_Write(1<<RTC_SQWEN | RTC_ALM0EN);		
+	//I2C_Write(1<<RTC_ALM0EN);
+	I2C_Stop();
+	I2C_Delay;
+	
+	// Crude clock-setting
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(RTCSEC);
+	I2C_Write(0x12 | 1<<RTC_ST); //Seconds
+	I2C_Write(0x10); //Minutes
+	I2C_Write(0x19); //Hours
+	I2C_Write(0x03 | 1<<RTC_VBATEN); //Day
+	I2C_Write(0x21); //Date
+	I2C_Write(0x09); //Month
+	I2C_Write(0x24); //Year
+	I2C_Stop();
+	I2C_Delay;
+	
+	// Alarm setting
+	I2C_Start();
+	I2C_Write(RTC_WR);
+	I2C_Write(ALM0MIN);
+	//I2C_Write(0x12); //Seconds
+	I2C_Write(0x11); //Minutes
+	I2C_Write(0x19); //Hours
+	I2C_Stop();
+	
+	while (1)
+	{
+		LCD_GOTOXY(0,1);
+		
+		if(isButtonPressed(modeButton)) {
+			_delay_ms(30);									// Debounce delay
+			if (isButtonPressed(modeButton)) {				// Confirm button is pressed
+				changeMode();
+				LCD_Send_Command(DISP_CL);
+				while (isButtonPressed(modeButton));		// Wait until the button is released
+				_delay_ms(30);								// Extra debounce delay
+			}
+		}
+		switch (currentMode) {
+			case 0:
+			
+			
+			Read_RTC();
+			LCD_GOTOXY(0,0);
+			sprintf(LCD_Buffer,"Date: %02d/%02d/%02d", Time.Date, Time.Month, Time.Year);
+			//sprintf(LCD_Buffer,"Date: %02d", Time.Seconds);
+			LCD_Send_String(LCD_Buffer);
+			LCD_GOTOXY(0,1);
+			sprintf(LCD_Buffer,"Time: %02d:%02d:%02d", Time.Hours, Time.Minutes, Time.Seconds);
+			LCD_Send_String(LCD_Buffer);
+			_delay_ms(50);
+			
+			break;
+			
+			case 1:
+			LCD_GOTOXY(0,0);
+			LCD_Send_String("Mode 1");
+			break;
+			
+			case 2:
+			Read_Alarm0();
+			
+			LCD_GOTOXY(0,0);
+			sprintf(LCD_Buffer,"Alarm: %02d:%02d", AlarmTime.Hours, AlarmTime.Minutes);
+			LCD_Send_String(LCD_Buffer);
+			
+			//LCD_Send_String("Mode 2");
+			break;
+		}
+		
+		
+	}
+}
+// please put any code you want to use below this please :)
+
+/****************************************************************/
+/*
+LCD ROUTINES
+*/
+void LCD_Send_Command(uint8_t command)
+{
+	_delay_us(100);
+	LCD_Control &= ~(1<<LCD_RS);
+	LCD_Data = command;
+	LCD_Control |= (1<<LCD_E);
+	LCD_Control &= ~(1<<LCD_E);
+}
+/****************************************************************/
+void LCD_Send_Data(uint8_t data)
+{
+	_delay_us(100);
+	LCD_Control |= (1<<LCD_RS);
+	LCD_Data = data;
+	LCD_Control |= (1<<LCD_E);
+	LCD_Control &= ~(1<<LCD_E);
+}
+/****************************************************************/
+//Go to a specific location on the LCD.  0,0 is the top left character
+void LCD_GOTOXY(uint8_t x,uint8_t y)
+{
+	if (x>15) x=0;
+	if (y>1) y=0;
+	//Ensure that the x,y values are within range
+	if (y==0) LCD_Send_Command(LINE_1+x);
+	if (y==1) LCD_Send_Command(LINE_2+x);
+
+
+}
+/****************************************************************/
+//Send a single character to a specific location
+void LCD_Send_Data_XY(uint8_t d,uint8_t x,uint8_t y)
+{
+	LCD_GOTOXY(x,y);
+	LCD_Send_Data(d);
+}
+/****************************************************************/
+//Send a string to the display.
+void LCD_Send_String(char *ch)
+{
+	int i=0;
+
+	while(ch[i]!='\0')
+	{
+		LCD_Send_Data(ch[i++]);
+	}
+}
+/****************************************************************/
+//Initialise the LCD
+void LCD_Initialise(void)
+{
+	_delay_ms(10);					//Ensure start-up delay
+	LCD_Send_Command(DISP_FS);		//Function set #
+	_delay_ms(16);					//16ms delay
+	LCD_Send_Command(DISP_FS);		//Function set
+	_delay_ms(5);					//5ms Delay
+	LCD_Send_Command(DISP_FS);      //Function set
+	_delay_ms(5);					//1ms delay
+	LCD_Send_Command(DISP_FS); 		//Function set
+	_delay_ms(1);					//1ms delay
+	LCD_Send_Command(DISP_ON);      //Turn Display on
+	_delay_ms(1);					//1ms delay
+	LCD_Send_Command(DISP_EN); 		//Set entry mode
+	_delay_ms(1);					//1ms delay
+	LCD_Send_Command(DISP_CL);      //Clear Display
+	_delay_ms(1);					//1ms delay
+}
+/****************************************************************/
+
+void Transmit_Character(char C)
+{
+	while(!(UCSR1A & 1<<UDRE1));
+	UDR1 = C;
+}
+
+void Transmit_String(char String[])
+{
+	uint8_t String_Length = strlen(String);
+	for (uint8_t Index = 0; Index < String_Length; Index++)
+	{
+		Transmit_Character(String[Index]);
+	}
+}
+
+void Split_GPS(char *GPS_Data)
+{
+	char timeStore[10] = {0};
+	char dateStore[10] = {0};
+	char latitude[15] = {0};
+	char NS = ' ';  // north/south
+	char longitude[15] = {0};
+	char EW = ' ';  // east/west
+	
+	char garbage_letter_1 = ' ';
+	char garbage_letter_2 = ' ';
+	char garbage_number[3] = {0};
+	
+	char *strip_pointer = strtok(GPS_Store, ","); //split by comma
+	int jump = 1;
+	
+	while (strip_pointer != NULL)
+	{
+		switch (jump)
+		{
+			case 1: strncpy(timeStore, strip_pointer, sizeof(timeStore) - 1);
+			break;
+			case 2: garbage_letter_1 = strip_pointer[0];
+			break;
+			case 3: strncpy(longitude, strip_pointer, sizeof(longitude) - 1);
+			break;
+			case 4: NS = strip_pointer[0];
+			break;
+			case 5: strncpy(latitude, strip_pointer, sizeof(latitude) - 1);
+			break;
+			case 6: EW = strip_pointer[0];
+			break;
+			case 7: strncpy(garbage_number, strip_pointer, sizeof(garbage_number) - 1);
+			break;
+			case 8: strncpy(dateStore, strip_pointer, sizeof(dateStore) - 1);
+			break;
+			case 9: garbage_letter_2 = strip_pointer[0];
+			break;
+		}
+		
+		strip_pointer = strtok(NULL, ",");
+		jump++;
+		
+	}
+	
+	
+	
+
+	
+	
+	Transmit_String("Time: ");
+	Transmit_String(timeStore);
+	Transmit_Character('\n');
+	
+	Transmit_String("Date: ");
+	Transmit_String(dateStore);
+	Transmit_Character('\n');
+	
+	Transmit_String("Latitude: ");
+	Transmit_String(latitude);
+	Transmit_String(", ");
+	Transmit_Character(NS);
+	Transmit_Character('\n');
+	
+	Transmit_String("Longitude: ");
+	Transmit_String(longitude);
+	Transmit_String(", ");
+	Transmit_Character(EW);
+	Transmit_Character('\n');
+	
+	//Transmit_Character(garbage_letter_1);
+	//Transmit_Character('\n');
+	//Transmit_Character(garbage_letter_2);
+	//Transmit_Character('\n');
+	//Transmit_String(garbage_number);
+	Transmit_Character('\n');
+
+
+	_delay_ms(500);
+	LCD_GOTOXY(0,0);
+	//for (int i = 0; i <= 5; i++)
+	//{
+	//if ( i == 1)
+	//{
+	//LCD_Send_String(dateStore[i]);
+	//LCD_Send_String("-");
+	//}
+	//else if ( i == 3)
+	//{
+	//LCD_Send_String(dateStore[i]);
+	//LCD_Send_String("-");
+	//}
+	//else
+	//{
+	LCD_Send_String(dateStore);
+	//}
+	//}
+
+	LCD_GOTOXY(0,1);
+	LCD_Send_String(timeStore);
+
+	
+}
+
+ISR(USART1_RX_vect)
+{
+	
+	volatile char Rx_Char;
+	Rx_Char = UDR1;
+	//when if_index is greater than 6, we add the new rxchar to the last position and shift everthing left
+	if (if_index_1 > 6)
+	{
+		for (int i = 0; i < 6; i++)
+		{
+			check[i] = check[i + 1];
+		}
+		check[6] = Rx_Char;
+	}
+	//this loads up the check variable starting from 0 till 6
+	else
+	{
+		check[if_index_1++] = Rx_Char;
+	}
+	
+	// check if we are in the gprmc part
+	if (memcmp(check, "$GPRMC,", 7) == 0)
+	{
+		state = IN;
+	}
+	
+	if (Rx_Char == '*') {
+		state = OUT;
+		//when it reaches * its out of GPRMC
+		GPS_Store[Store] = '\0';
+		Store = 0;
+		Split_GPS(GPS_Store);
+		
+	}
+	
+	if (state == IN && Store < sizeof(GPS_Store) - 1)
+	{
+		// inside the GPRMC
+		GPS_Store[Store] = Rx_Char;
+		Store++;
+	}
+}
