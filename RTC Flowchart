@@ -1,0 +1,40 @@
+---
+config:
+  theme: redux
+  look: neo
+---
+flowchart TD
+    A[Start/Reset]
+    B[Initialize RTC via I2C]
+    C[Enable Oscillator and SQW Output]
+    D[Set RTC Time from the the GPS]
+    E[Enter Main Loop]
+    F{RTC Display Mode Selected?}
+    G[Read RTC]
+    H[Start I2C Communication]
+    I[Write RTC_WR and select RTCSEC register]
+    J[Send repeated start; write RTC_RD]
+    K[Read registers: Seconds, Minutes, Hours, Day, Date, Month, Year]
+    L[Stop I2C Communication]
+    M[Convert BCD values to Decimal]
+    N[Store values in Time structure]
+    O[Update LCD with Date and Time]
+    P[Delay and Loop Back]
+    Q[Process Other Modes]
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F -- Yes --> G
+    F -- No --> Q
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    L --> M
+    M --> N
+    N --> O
+    O --> P
+    P --> E
