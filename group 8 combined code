@@ -19,7 +19,12 @@
 
 #define IN 1
 #define OUT 0
-
+char timeStore[10] = {0};
+char dateStore[10] = {0};
+char latitude[15] = {0};
+char NS = ' ';  // north/south
+char longitude[15] = {0};
+char EW = ' ';  // east/west
 char UART_Buffer[30];
 char GPS_Store[58];
 int Store = 0;
@@ -644,8 +649,15 @@ int main(void)
 			break;
 			
 			case 1:			// Display GPS (to be added)
+			
 			LCD_GOTOXY(0,0);
-			LCD_Send_String("Mode 1");
+			LCD_Send_String("long:");
+			LCD_Send_String(NS);
+			LCD_Send_String(longitude);
+			LCD_GOTOXY(0,1);
+			LCD_Send_String("lat:");
+			LCD_Send_String(EW);
+			
 			break;
 			
 			case 2:			// Alarm Setting
@@ -780,12 +792,12 @@ void Transmit_String(char String[])
 
 void Split_GPS(char *GPS_Data)
 {
-	char timeStore[10] = {0};
-	char dateStore[10] = {0};
-	char latitude[15] = {0};
-	char NS = ' ';  // north/south
-	char longitude[15] = {0};
-	char EW = ' ';  // east/west
+	//char timeStore[10] = {0};
+	//char dateStore[10] = {0};
+	//char latitude[15] = {0};
+	//char NS = ' ';  // north/south
+	//char longitude[15] = {0};
+	//char EW = ' ';  // east/west
 	
 	char garbage_letter_1 = ' ';
 	char garbage_letter_2 = ' ';
@@ -851,28 +863,7 @@ void Split_GPS(char *GPS_Data)
 	Transmit_Character('\n');
 
 
-	_delay_ms(500);
-	LCD_GOTOXY(0,0);
-	//for (int i = 0; i <= 5; i++)
-	//{
-	//if ( i == 1)
-	//{
-	//LCD_Send_String(dateStore[i]);
-	//LCD_Send_String("-");
-	//}
-	//else if ( i == 3)
-	//{
-	//LCD_Send_String(dateStore[i]);
-	//LCD_Send_String("-");
-	//}
-	//else
-	//{
-	LCD_Send_String(dateStore);
-	//}
-	//}
 
-	LCD_GOTOXY(0,1);
-	LCD_Send_String(timeStore);
 
 	
 }
@@ -919,3 +910,4 @@ ISR(USART1_RX_vect)
 		Store++;
 	}
 }
+
